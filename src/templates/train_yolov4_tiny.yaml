@@ -1,0 +1,591 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: retrain-yolov4-tiny-with-labelstudio-
+  annotations: {pipelines.kubeflow.org/kfp_sdk_version: 1.7.2, pipelines.kubeflow.org/pipeline_compilation_time: '2021-09-02T08:00:28.632507',
+    pipelines.kubeflow.org/pipeline_spec: '{"description": "A pipeline to build the
+      Systayn Detect Recyclables App docker image", "inputs": [{"name": "model_name"},
+      {"name": "labelstudio_project"}, {"name": "labels"}, {"name": "namespace"},
+      {"name": "domain"}], "name": "Retrain YoloV4 Tiny with Labelstudio"}'}
+  labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.7.2}
+spec:
+  entrypoint: retrain-yolov4-tiny-with-labelstudio
+  templates:
+  - name: create-workspace
+    resource:
+      action: create
+      manifest: |
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+        metadata:
+          name: '{{workflow.name}}-workspacedirpvc'
+        spec:
+          accessModes:
+          - ReadWriteOnce
+          resources:
+            requests:
+              storage: 500Mi
+    outputs:
+      parameters:
+      - name: create-workspace-manifest
+        valueFrom: {jsonPath: '{}'}
+      - name: create-workspace-name
+        valueFrom: {jsonPath: '{.metadata.name}'}
+      - name: create-workspace-size
+        valueFrom: {jsonPath: '{.status.capacity.storage}'}
+    metadata:
+      labels:
+        pipelines.kubeflow.org/kfp_sdk_version: 1.7.2
+        pipelines.kubeflow.org/pipeline-sdk-type: kfp
+        pipelines.kubeflow.org/enable_caching: "true"
+  - name: prepare-labelstudio-data-for-darknet
+    container:
+      args: [--project, '{{inputs.parameters.labelstudio_project}}', --labels, '{{inputs.parameters.labels}}',
+        --namespace, '{{inputs.parameters.namespace}}', --domain, '{{inputs.parameters.domain}}',
+        '----output-paths', /tmp/outputs/data_file/data, /tmp/outputs/config_file/data,
+        /tmp/outputs/conv_file/data, /tmp/outputs/names_file/data, /tmp/outputs/weights_file/data]
+      command:
+      - sh
+      - -c
+      - (PIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet --no-warn-script-location
+        'google-cloud-storage' 'pandas' 'numpy' 'chevron' || PIP_DISABLE_PIP_VERSION_CHECK=1
+        python3 -m pip install --quiet --no-warn-script-location 'google-cloud-storage'
+        'pandas' 'numpy' 'chevron' --user) && "$0" "$@"
+      - sh
+      - -ec
+      - |
+        program_path=$(mktemp)
+        printf "%s" "$0" > "$program_path"
+        python3 -u "$program_path" "$@"
+      - "def prepare_labelstudio_data_for_darknet(\n    project,\n    labels,\n  \
+        \  namespace,\n    domain):\n    '''Prepares Labelstudio Data for Darknet\
+        \ training'''\n    import chevron\n    from google.cloud import storage\n\
+        \    import json\n    import os\n    from pathlib import Path\n    import\
+        \ numpy as np\n    import pandas as pd\n    from urllib.parse import urlparse,\
+        \ ParseResult\n    from collections import namedtuple\n\n    # Directories\n\
+        \    basedir = '/workspace'\n    datadir = os.path.join(basedir, 'data')\n\
+        \    Path(datadir).mkdir(parents=True, exist_ok=True)\n    testdir = os.path.join(basedir,\
+        \ 'test')\n    Path(testdir).mkdir(parents=True, exist_ok=True)\n    traindir\
+        \ = os.path.join(basedir, 'train')\n    Path(traindir).mkdir(parents=True,\
+        \ exist_ok=True)\n    validdir = os.path.join(basedir, 'valid')\n    Path(validdir).mkdir(parents=True,\
+        \ exist_ok=True)\n    cfgdir = os.path.join(basedir, 'cfg')\n    Path(cfgdir).mkdir(parents=True,\
+        \ exist_ok=True)\n    modeldir = os.path.join(basedir, 'model')\n    Path(modeldir).mkdir(parents=True,\
+        \ exist_ok=True)\n    backupdir = os.path.join(basedir, 'backup')\n    Path(backupdir).mkdir(parents=True,\
+        \ exist_ok=True)\n\n    train_percent = 0.8\n    validate_percent = 0.2\n\n\
+        \    bucket_name = f\"{namespace}.{domain}\"\n    storage_client = storage.Client()\n\
+        \    bucket = storage_client.get_bucket(bucket_name)\n\n    my_prefix = f\"\
+        label-studio/projects/{project}/results/\" # the name of the subfolder\n \
+        \   blobs = list(bucket.list_blobs(prefix = my_prefix, delimiter = '/'))\n\
+        \n    m = len(blobs)\n    train_end = int(train_percent * m)\n    validate_end\
+        \ = int(validate_percent * m) + train_end\n\n    print(f'Number of images:\
+        \ {m}')\n    print(f'Train set size: {int(train_percent * m)}')\n    print(f'Validate\
+        \ set size: {int(validate_percent * m)}')\n    print(f'Test set size: {m -\
+        \ validate_end}')\n\n    def strip_scheme(url):\n        parsed_result = urlparse(url)\n\
+        \        print(parsed_result)\n        return ParseResult('', parsed_result[1:]).geturl()\n\
+        \n    def save_to_yolo_fmt(file_name, annotation):\n        # <object-class>\
+        \ - integer number of object from 0 to (classes-1)\n        # <x> <y> <width>\
+        \ <height> - float values relative to width and height of image, it can be\
+        \ equal from (0.0 to 1.0]\n        # for example: <x> = <absolute_x> / <image_width>\
+        \ or <height> = <absolute_height> / <image_height>\n        # atention: <x>\
+        \ <y> - are center of rectangle (are not top-left corner)\n\n        with\
+        \ open(file_name + '.txt', 'w') as f:\n            for r in annotation['result']:\n\
+        \                w = r['value']['width']/r['original_width']\n           \
+        \     h = r['value']['height']/r['original_height']\n                x = (r['value']['x']+(w/2))/r['original_width']\n\
+        \                y = (r['value']['y']+(h/2))/r['original_height']\n      \
+        \          for l in r['value']['rectanglelabels']:\n                    if\
+        \ l in labels:\n                        idx = labels.index(l)\n          \
+        \              f.write(f'{idx} {x} {y} {w} {h}\\n')\n\n        parsed_url\
+        \ = urlparse(annotation['task']['data']['image'])\n        blob = bucket.blob(parsed_url.path[1:])\n\
+        \        blob.download_to_filename(file_name + '.jpg')\n\n    for i, blob\
+        \ in enumerate(blobs):\n        if(blob.name != my_prefix): # ignoring the\
+        \ subfolder itself\n            if i < train_end:\n                file_name\
+        \ = blob.name.replace(my_prefix, \"\")\n                file_name = os.path.join(traindir,\
+        \ file_name)\n                print(f'adding {i}, {file_name} to train')\n\
+        \                annotation = json.loads(blob.download_as_string().decode())\n\
+        \                save_to_yolo_fmt(file_name, annotation)            \n   \
+        \         elif i < validate_end:\n                file_name = blob.name.replace(my_prefix,\
+        \ \"\")\n                file_name = os.path.join(validdir, file_name)\n \
+        \               print(f'adding {i}, {file_name} to validate')\n          \
+        \      annotation = json.loads(blob.download_as_string().decode())\n     \
+        \           save_to_yolo_fmt(file_name, annotation)\n            else:   \
+        \        \n                file_name = blob.name.replace(my_prefix, \"\")\n\
+        \                file_name = os.path.join(testdir, file_name)\n          \
+        \      print(f'adding {i}, {file_name} to test') \n                annotation\
+        \ = json.loads(blob.download_as_string().decode())\n                save_to_yolo_fmt(file_name,\
+        \ annotation)\n\n    data_file = os.path.join(datadir, 'obj.data')\n    with\
+        \ open(data_file, 'w') as out:\n      out.write('classes = 3\\n')\n      out.write('train\
+        \ = data/train.txt\\n')\n      out.write('valid = data/valid.txt\\n')\n  \
+        \    out.write('names = data/obj.names\\n')\n      out.write('backup = backup/')\n\
+        \n    with open(os.path.join(datadir, 'train.txt'), 'w') as out:\n      for\
+        \ img in [f for f in os.listdir(traindir) if f.endswith('jpg')]:\n       \
+        \ out.write(os.path.join(traindir, img) + '\\n')\n\n    with open(os.path.join(datadir,\
+        \ 'valid.txt'), 'w') as out:\n      for img in [f for f in os.listdir(validdir)\
+        \ if f.endswith('jpg')]:\n        out.write(os.path.join(validdir, img) +\
+        \ '\\n')\n\n    names_file = os.path.join(datadir, 'obj.names')\n    with\
+        \ open(names_file, 'w') as out:\n      for l in labels:\n        out.write(l\
+        \ + '\\n')\n\n    num_classes = len(labels)\n    max_batches = num_classes*1\
+        \ # *2000\n    steps1 = .8 * max_batches\n    steps2 = .9 * max_batches\n\
+        \    args = {\n        \"num_classes\": num_classes,\n        \"max_batches\"\
+        : max_batches,\n        \"steps_str\": str(steps1)+','+str(steps2),\n    \
+        \    \"num_filters\": (num_classes + 5) * 3\n    }\n\n    print(\"writing\
+        \ config for a custom YOLOv4 detector detecting number of classes: \" + str(num_classes))\n\
+        \n    #Instructions from the darknet repo\n    #change line max_batches to\
+        \ (classes*2000 but not less than number of training images, and not less\
+        \ than 6000), f.e. max_batches=6000 if you train for 3 classes\n    #change\
+        \ line steps to 80% and 90% of max_batches, f.e. steps=4800,5400\n\n    parsed_url\
+        \ = urlparse('gs://demonstrations.teknoir.info/darknet/custom-yolov4-tiny-detector.cfg.mustache')\n\
+        \    blob = bucket.blob(parsed_url.path[1:])\n    config_file = os.path.join(cfgdir,\
+        \ 'custom-yolov4-tiny-detector.cfg')\n    with open(config_file, 'w') as f:\n\
+        \        f.write(chevron.render(blob.download_as_string().decode(), args))\n\
+        \n    import requests\n    def wget(url, file):\n        r = requests.get(url,\
+        \ allow_redirects=True)\n        open(file, 'wb').write(r.content)\n\n   \
+        \ url_weights = 'https://github.com/AlexeyAB/darknet/releases/download/darknet_yolo_v4_pre/yolov4-tiny.weights'\n\
+        \    file_weights = os.path.join(modeldir, 'yolov4-tiny.weights')\n    wget(url_weights,\
+        \ file_weights)\n\n    url_conv = 'https://github.com/AlexeyAB/darknet/releases/download/darknet_yolo_v4_pre/yolov4-tiny.conv.29'\n\
+        \    file_conv = os.path.join(modeldir, 'yolov4-tiny.conv.29')\n    wget(url_conv,\
+        \ file_conv)\n\n    # Pick best weights file from backup\n    weights_file\
+        \ = str(Path(config_file).with_suffix('').name)\n    weights_file = os.path.join(backupdir,\
+        \ weights_file + '_best.weights')\n\n    output = namedtuple('DarknetArgs',\
+        \ ['data_file', 'config_file', 'conv_file', 'names_file', 'weights_file'])\n\
+        \    return output(data_file, config_file, file_conv, names_file, weights_file)\n\
+        \ndef _serialize_str(str_value: str) -> str:\n    if not isinstance(str_value,\
+        \ str):\n        raise TypeError('Value \"{}\" has type \"{}\" instead of\
+        \ str.'.format(str(str_value), str(type(str_value))))\n    return str_value\n\
+        \nimport json\nimport argparse\n_parser = argparse.ArgumentParser(prog='Prepare\
+        \ labelstudio data for darknet', description='Prepares Labelstudio Data for\
+        \ Darknet training')\n_parser.add_argument(\"--project\", dest=\"project\"\
+        , type=str, required=True, default=argparse.SUPPRESS)\n_parser.add_argument(\"\
+        --labels\", dest=\"labels\", type=json.loads, required=True, default=argparse.SUPPRESS)\n\
+        _parser.add_argument(\"--namespace\", dest=\"namespace\", type=str, required=True,\
+        \ default=argparse.SUPPRESS)\n_parser.add_argument(\"--domain\", dest=\"domain\"\
+        , type=str, required=True, default=argparse.SUPPRESS)\n_parser.add_argument(\"\
+        ----output-paths\", dest=\"_output_paths\", type=str, nargs=5)\n_parsed_args\
+        \ = vars(_parser.parse_args())\n_output_files = _parsed_args.pop(\"_output_paths\"\
+        , [])\n\n_outputs = prepare_labelstudio_data_for_darknet(**_parsed_args)\n\
+        \n_output_serializers = [\n    _serialize_str,\n    _serialize_str,\n    _serialize_str,\n\
+        \    _serialize_str,\n    _serialize_str,\n\n]\n\nimport os\nfor idx, output_file\
+        \ in enumerate(_output_files):\n    try:\n        os.makedirs(os.path.dirname(output_file))\n\
+        \    except OSError:\n        pass\n    with open(output_file, 'w') as f:\n\
+        \        f.write(_output_serializers[idx](_outputs[idx]))\n"
+      image: python:3.7
+      volumeMounts:
+      - {mountPath: /workspace, name: create-workspace}
+    inputs:
+      parameters:
+      - {name: create-workspace-name}
+      - {name: domain}
+      - {name: labels}
+      - {name: labelstudio_project}
+      - {name: namespace}
+    outputs:
+      parameters:
+      - name: prepare-labelstudio-data-for-darknet-config_file
+        valueFrom: {path: /tmp/outputs/config_file/data}
+      - name: prepare-labelstudio-data-for-darknet-conv_file
+        valueFrom: {path: /tmp/outputs/conv_file/data}
+      - name: prepare-labelstudio-data-for-darknet-data_file
+        valueFrom: {path: /tmp/outputs/data_file/data}
+      - name: prepare-labelstudio-data-for-darknet-names_file
+        valueFrom: {path: /tmp/outputs/names_file/data}
+      - name: prepare-labelstudio-data-for-darknet-weights_file
+        valueFrom: {path: /tmp/outputs/weights_file/data}
+      artifacts:
+      - {name: prepare-labelstudio-data-for-darknet-config_file, path: /tmp/outputs/config_file/data}
+      - {name: prepare-labelstudio-data-for-darknet-conv_file, path: /tmp/outputs/conv_file/data}
+      - {name: prepare-labelstudio-data-for-darknet-data_file, path: /tmp/outputs/data_file/data}
+      - {name: prepare-labelstudio-data-for-darknet-names_file, path: /tmp/outputs/names_file/data}
+      - {name: prepare-labelstudio-data-for-darknet-weights_file, path: /tmp/outputs/weights_file/data}
+    metadata:
+      labels:
+        pipelines.kubeflow.org/kfp_sdk_version: 1.7.2
+        pipelines.kubeflow.org/pipeline-sdk-type: kfp
+        pipelines.kubeflow.org/enable_caching: "true"
+      annotations: {pipelines.kubeflow.org/component_spec: '{"description": "Prepares
+          Labelstudio Data for Darknet training", "implementation": {"container":
+          {"args": ["--project", {"inputValue": "project"}, "--labels", {"inputValue":
+          "labels"}, "--namespace", {"inputValue": "namespace"}, "--domain", {"inputValue":
+          "domain"}, "----output-paths", {"outputPath": "data_file"}, {"outputPath":
+          "config_file"}, {"outputPath": "conv_file"}, {"outputPath": "names_file"},
+          {"outputPath": "weights_file"}], "command": ["sh", "-c", "(PIP_DISABLE_PIP_VERSION_CHECK=1
+          python3 -m pip install --quiet --no-warn-script-location ''google-cloud-storage''
+          ''pandas'' ''numpy'' ''chevron'' || PIP_DISABLE_PIP_VERSION_CHECK=1 python3
+          -m pip install --quiet --no-warn-script-location ''google-cloud-storage''
+          ''pandas'' ''numpy'' ''chevron'' --user) && \"$0\" \"$@\"", "sh", "-ec",
+          "program_path=$(mktemp)\nprintf \"%s\" \"$0\" > \"$program_path\"\npython3
+          -u \"$program_path\" \"$@\"\n", "def prepare_labelstudio_data_for_darknet(\n    project,\n    labels,\n    namespace,\n    domain):\n    ''''''Prepares
+          Labelstudio Data for Darknet training''''''\n    import chevron\n    from
+          google.cloud import storage\n    import json\n    import os\n    from pathlib
+          import Path\n    import numpy as np\n    import pandas as pd\n    from urllib.parse
+          import urlparse, ParseResult\n    from collections import namedtuple\n\n    #
+          Directories\n    basedir = ''/workspace''\n    datadir = os.path.join(basedir,
+          ''data'')\n    Path(datadir).mkdir(parents=True, exist_ok=True)\n    testdir
+          = os.path.join(basedir, ''test'')\n    Path(testdir).mkdir(parents=True,
+          exist_ok=True)\n    traindir = os.path.join(basedir, ''train'')\n    Path(traindir).mkdir(parents=True,
+          exist_ok=True)\n    validdir = os.path.join(basedir, ''valid'')\n    Path(validdir).mkdir(parents=True,
+          exist_ok=True)\n    cfgdir = os.path.join(basedir, ''cfg'')\n    Path(cfgdir).mkdir(parents=True,
+          exist_ok=True)\n    modeldir = os.path.join(basedir, ''model'')\n    Path(modeldir).mkdir(parents=True,
+          exist_ok=True)\n    backupdir = os.path.join(basedir, ''backup'')\n    Path(backupdir).mkdir(parents=True,
+          exist_ok=True)\n\n    train_percent = 0.8\n    validate_percent = 0.2\n\n    bucket_name
+          = f\"{namespace}.{domain}\"\n    storage_client = storage.Client()\n    bucket
+          = storage_client.get_bucket(bucket_name)\n\n    my_prefix = f\"label-studio/projects/{project}/results/\"
+          # the name of the subfolder\n    blobs = list(bucket.list_blobs(prefix =
+          my_prefix, delimiter = ''/''))\n\n    m = len(blobs)\n    train_end = int(train_percent
+          * m)\n    validate_end = int(validate_percent * m) + train_end\n\n    print(f''Number
+          of images: {m}'')\n    print(f''Train set size: {int(train_percent * m)}'')\n    print(f''Validate
+          set size: {int(validate_percent * m)}'')\n    print(f''Test set size: {m
+          - validate_end}'')\n\n    def strip_scheme(url):\n        parsed_result
+          = urlparse(url)\n        print(parsed_result)\n        return ParseResult('''',
+          parsed_result[1:]).geturl()\n\n    def save_to_yolo_fmt(file_name, annotation):\n        #
+          <object-class> - integer number of object from 0 to (classes-1)\n        #
+          <x> <y> <width> <height> - float values relative to width and height of
+          image, it can be equal from (0.0 to 1.0]\n        # for example: <x> = <absolute_x>
+          / <image_width> or <height> = <absolute_height> / <image_height>\n        #
+          atention: <x> <y> - are center of rectangle (are not top-left corner)\n\n        with
+          open(file_name + ''.txt'', ''w'') as f:\n            for r in annotation[''result'']:\n                w
+          = r[''value''][''width'']/r[''original_width'']\n                h = r[''value''][''height'']/r[''original_height'']\n                x
+          = (r[''value''][''x'']+(w/2))/r[''original_width'']\n                y =
+          (r[''value''][''y'']+(h/2))/r[''original_height'']\n                for
+          l in r[''value''][''rectanglelabels'']:\n                    if l in labels:\n                        idx
+          = labels.index(l)\n                        f.write(f''{idx} {x} {y} {w}
+          {h}\\n'')\n\n        parsed_url = urlparse(annotation[''task''][''data''][''image''])\n        blob
+          = bucket.blob(parsed_url.path[1:])\n        blob.download_to_filename(file_name
+          + ''.jpg'')\n\n    for i, blob in enumerate(blobs):\n        if(blob.name
+          != my_prefix): # ignoring the subfolder itself\n            if i < train_end:\n                file_name
+          = blob.name.replace(my_prefix, \"\")\n                file_name = os.path.join(traindir,
+          file_name)\n                print(f''adding {i}, {file_name} to train'')\n                annotation
+          = json.loads(blob.download_as_string().decode())\n                save_to_yolo_fmt(file_name,
+          annotation)            \n            elif i < validate_end:\n                file_name
+          = blob.name.replace(my_prefix, \"\")\n                file_name = os.path.join(validdir,
+          file_name)\n                print(f''adding {i}, {file_name} to validate'')\n                annotation
+          = json.loads(blob.download_as_string().decode())\n                save_to_yolo_fmt(file_name,
+          annotation)\n            else:           \n                file_name = blob.name.replace(my_prefix,
+          \"\")\n                file_name = os.path.join(testdir, file_name)\n                print(f''adding
+          {i}, {file_name} to test'') \n                annotation = json.loads(blob.download_as_string().decode())\n                save_to_yolo_fmt(file_name,
+          annotation)\n\n    data_file = os.path.join(datadir, ''obj.data'')\n    with
+          open(data_file, ''w'') as out:\n      out.write(''classes = 3\\n'')\n      out.write(''train
+          = data/train.txt\\n'')\n      out.write(''valid = data/valid.txt\\n'')\n      out.write(''names
+          = data/obj.names\\n'')\n      out.write(''backup = backup/'')\n\n    with
+          open(os.path.join(datadir, ''train.txt''), ''w'') as out:\n      for img
+          in [f for f in os.listdir(traindir) if f.endswith(''jpg'')]:\n        out.write(os.path.join(traindir,
+          img) + ''\\n'')\n\n    with open(os.path.join(datadir, ''valid.txt''), ''w'')
+          as out:\n      for img in [f for f in os.listdir(validdir) if f.endswith(''jpg'')]:\n        out.write(os.path.join(validdir,
+          img) + ''\\n'')\n\n    names_file = os.path.join(datadir, ''obj.names'')\n    with
+          open(names_file, ''w'') as out:\n      for l in labels:\n        out.write(l
+          + ''\\n'')\n\n    num_classes = len(labels)\n    max_batches = num_classes*1
+          # *2000\n    steps1 = .8 * max_batches\n    steps2 = .9 * max_batches\n    args
+          = {\n        \"num_classes\": num_classes,\n        \"max_batches\": max_batches,\n        \"steps_str\":
+          str(steps1)+'',''+str(steps2),\n        \"num_filters\": (num_classes +
+          5) * 3\n    }\n\n    print(\"writing config for a custom YOLOv4 detector
+          detecting number of classes: \" + str(num_classes))\n\n    #Instructions
+          from the darknet repo\n    #change line max_batches to (classes*2000 but
+          not less than number of training images, and not less than 6000), f.e. max_batches=6000
+          if you train for 3 classes\n    #change line steps to 80% and 90% of max_batches,
+          f.e. steps=4800,5400\n\n    parsed_url = urlparse(''gs://demonstrations.teknoir.info/darknet/custom-yolov4-tiny-detector.cfg.mustache'')\n    blob
+          = bucket.blob(parsed_url.path[1:])\n    config_file = os.path.join(cfgdir,
+          ''custom-yolov4-tiny-detector.cfg'')\n    with open(config_file, ''w'')
+          as f:\n        f.write(chevron.render(blob.download_as_string().decode(),
+          args))\n\n    import requests\n    def wget(url, file):\n        r = requests.get(url,
+          allow_redirects=True)\n        open(file, ''wb'').write(r.content)\n\n    url_weights
+          = ''https://github.com/AlexeyAB/darknet/releases/download/darknet_yolo_v4_pre/yolov4-tiny.weights''\n    file_weights
+          = os.path.join(modeldir, ''yolov4-tiny.weights'')\n    wget(url_weights,
+          file_weights)\n\n    url_conv = ''https://github.com/AlexeyAB/darknet/releases/download/darknet_yolo_v4_pre/yolov4-tiny.conv.29''\n    file_conv
+          = os.path.join(modeldir, ''yolov4-tiny.conv.29'')\n    wget(url_conv, file_conv)\n\n    #
+          Pick best weights file from backup\n    weights_file = str(Path(config_file).with_suffix('''').name)\n    weights_file
+          = os.path.join(backupdir, weights_file + ''_best.weights'')\n\n    output
+          = namedtuple(''DarknetArgs'', [''data_file'', ''config_file'', ''conv_file'',
+          ''names_file'', ''weights_file''])\n    return output(data_file, config_file,
+          file_conv, names_file, weights_file)\n\ndef _serialize_str(str_value: str)
+          -> str:\n    if not isinstance(str_value, str):\n        raise TypeError(''Value
+          \"{}\" has type \"{}\" instead of str.''.format(str(str_value), str(type(str_value))))\n    return
+          str_value\n\nimport json\nimport argparse\n_parser = argparse.ArgumentParser(prog=''Prepare
+          labelstudio data for darknet'', description=''Prepares Labelstudio Data
+          for Darknet training'')\n_parser.add_argument(\"--project\", dest=\"project\",
+          type=str, required=True, default=argparse.SUPPRESS)\n_parser.add_argument(\"--labels\",
+          dest=\"labels\", type=json.loads, required=True, default=argparse.SUPPRESS)\n_parser.add_argument(\"--namespace\",
+          dest=\"namespace\", type=str, required=True, default=argparse.SUPPRESS)\n_parser.add_argument(\"--domain\",
+          dest=\"domain\", type=str, required=True, default=argparse.SUPPRESS)\n_parser.add_argument(\"----output-paths\",
+          dest=\"_output_paths\", type=str, nargs=5)\n_parsed_args = vars(_parser.parse_args())\n_output_files
+          = _parsed_args.pop(\"_output_paths\", [])\n\n_outputs = prepare_labelstudio_data_for_darknet(**_parsed_args)\n\n_output_serializers
+          = [\n    _serialize_str,\n    _serialize_str,\n    _serialize_str,\n    _serialize_str,\n    _serialize_str,\n\n]\n\nimport
+          os\nfor idx, output_file in enumerate(_output_files):\n    try:\n        os.makedirs(os.path.dirname(output_file))\n    except
+          OSError:\n        pass\n    with open(output_file, ''w'') as f:\n        f.write(_output_serializers[idx](_outputs[idx]))\n"],
+          "image": "python:3.7"}}, "inputs": [{"name": "project", "type": "String"},
+          {"name": "labels", "type": "JsonArray"}, {"name": "namespace", "type": "String"},
+          {"name": "domain", "type": "String"}], "name": "Prepare labelstudio data
+          for darknet", "outputs": [{"name": "data_file", "type": "String"}, {"name":
+          "config_file", "type": "String"}, {"name": "conv_file", "type": "String"},
+          {"name": "names_file", "type": "String"}, {"name": "weights_file", "type":
+          "String"}]}', pipelines.kubeflow.org/component_ref: '{}', pipelines.kubeflow.org/arguments.parameters: '{"domain":
+          "{{inputs.parameters.domain}}", "labels": "{{inputs.parameters.labels}}",
+          "namespace": "{{inputs.parameters.namespace}}", "project": "{{inputs.parameters.labelstudio_project}}"}'}
+    volumes:
+    - name: create-workspace
+      persistentVolumeClaim: {claimName: '{{inputs.parameters.create-workspace-name}}'}
+  - name: retrain-yolov4-tiny-with-labelstudio
+    inputs:
+      parameters:
+      - {name: domain}
+      - {name: labels}
+      - {name: labelstudio_project}
+      - {name: model_name}
+      - {name: namespace}
+    dag:
+      tasks:
+      - {name: create-workspace, template: create-workspace}
+      - name: prepare-labelstudio-data-for-darknet
+        template: prepare-labelstudio-data-for-darknet
+        dependencies: [create-workspace]
+        arguments:
+          parameters:
+          - {name: create-workspace-name, value: '{{tasks.create-workspace.outputs.parameters.create-workspace-name}}'}
+          - {name: domain, value: '{{inputs.parameters.domain}}'}
+          - {name: labels, value: '{{inputs.parameters.labels}}'}
+          - {name: labelstudio_project, value: '{{inputs.parameters.labelstudio_project}}'}
+          - {name: namespace, value: '{{inputs.parameters.namespace}}'}
+      - name: save-darknet-model
+        template: save-darknet-model
+        dependencies: [create-workspace, prepare-labelstudio-data-for-darknet, train-darknet]
+        arguments:
+          parameters:
+          - {name: create-workspace-name, value: '{{tasks.create-workspace.outputs.parameters.create-workspace-name}}'}
+          - {name: domain, value: '{{inputs.parameters.domain}}'}
+          - {name: model_name, value: '{{inputs.parameters.model_name}}'}
+          - {name: namespace, value: '{{inputs.parameters.namespace}}'}
+          - {name: prepare-labelstudio-data-for-darknet-config_file, value: '{{tasks.prepare-labelstudio-data-for-darknet.outputs.parameters.prepare-labelstudio-data-for-darknet-config_file}}'}
+          - {name: prepare-labelstudio-data-for-darknet-names_file, value: '{{tasks.prepare-labelstudio-data-for-darknet.outputs.parameters.prepare-labelstudio-data-for-darknet-names_file}}'}
+          - {name: prepare-labelstudio-data-for-darknet-weights_file, value: '{{tasks.prepare-labelstudio-data-for-darknet.outputs.parameters.prepare-labelstudio-data-for-darknet-weights_file}}'}
+      - name: show-workspace
+        template: show-workspace
+        dependencies: [create-workspace, prepare-labelstudio-data-for-darknet]
+        arguments:
+          parameters:
+          - {name: create-workspace-name, value: '{{tasks.create-workspace.outputs.parameters.create-workspace-name}}'}
+      - name: train-darknet
+        template: train-darknet
+        dependencies: [create-workspace, prepare-labelstudio-data-for-darknet]
+        arguments:
+          parameters:
+          - {name: create-workspace-name, value: '{{tasks.create-workspace.outputs.parameters.create-workspace-name}}'}
+          - {name: prepare-labelstudio-data-for-darknet-config_file, value: '{{tasks.prepare-labelstudio-data-for-darknet.outputs.parameters.prepare-labelstudio-data-for-darknet-config_file}}'}
+          - {name: prepare-labelstudio-data-for-darknet-conv_file, value: '{{tasks.prepare-labelstudio-data-for-darknet.outputs.parameters.prepare-labelstudio-data-for-darknet-conv_file}}'}
+          - {name: prepare-labelstudio-data-for-darknet-data_file, value: '{{tasks.prepare-labelstudio-data-for-darknet.outputs.parameters.prepare-labelstudio-data-for-darknet-data_file}}'}
+  - name: save-darknet-model
+    container:
+      args: [--model-name, '{{inputs.parameters.model_name}}', --weights-file, '{{inputs.parameters.prepare-labelstudio-data-for-darknet-weights_file}}',
+        --config-file, '{{inputs.parameters.prepare-labelstudio-data-for-darknet-config_file}}',
+        --names-file, '{{inputs.parameters.prepare-labelstudio-data-for-darknet-names_file}}',
+        --namespace, '{{inputs.parameters.namespace}}', --domain, '{{inputs.parameters.domain}}',
+        '----output-paths', /tmp/outputs/names_file/data, /tmp/outputs/config_file/data,
+        /tmp/outputs/weights_file/data]
+      command:
+      - sh
+      - -c
+      - (PIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet --no-warn-script-location
+        'google-cloud-storage' || PIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install
+        --quiet --no-warn-script-location 'google-cloud-storage' --user) && "$0" "$@"
+      - sh
+      - -ec
+      - |
+        program_path=$(mktemp)
+        printf "%s" "$0" > "$program_path"
+        python3 -u "$program_path" "$@"
+      - |
+        def save_darknet_model(
+            model_name,
+            weights_file,
+            config_file,
+            names_file,
+            namespace,
+            domain):
+            from google.cloud import storage
+            import os
+            from collections import namedtuple
+
+            def upload_blob(bucket_name, source_file_name, destination_blob_name):
+                """Uploads a file to the bucket."""
+                storage_client = storage.Client()
+                bucket = storage_client.bucket(bucket_name)
+                blob = bucket.blob(destination_blob_name)
+
+                blob.upload_from_filename(source_file_name)
+
+                print(
+                    "File {} uploaded to {}.".format(
+                        source_file_name, destination_blob_name
+                    )
+                )
+
+            bucket_name = f"{namespace}.{domain}"
+            destination_prefix = os.path.join('models/', model_name)
+
+            destination_model_weights = os.path.join(destination_prefix, 'model.weights')
+            destination_model_config = os.path.join(destination_prefix, 'model.cfg')
+            destination_obj_names = os.path.join(destination_prefix, 'obj.names')
+
+            upload_blob(bucket_name, weights_file, destination_model_weights)
+            upload_blob(bucket_name, config_file, destination_model_config)
+            upload_blob(bucket_name, names_file, destination_obj_names)
+
+            output = namedtuple('DarknetModel', ['names_file', 'config_file', 'weights_file'])
+            return output(destination_obj_names, destination_model_config, destination_model_weights)
+
+        def _serialize_str(str_value: str) -> str:
+            if not isinstance(str_value, str):
+                raise TypeError('Value "{}" has type "{}" instead of str.'.format(str(str_value), str(type(str_value))))
+            return str_value
+
+        import argparse
+        _parser = argparse.ArgumentParser(prog='Save darknet model', description='')
+        _parser.add_argument("--model-name", dest="model_name", type=str, required=True, default=argparse.SUPPRESS)
+        _parser.add_argument("--weights-file", dest="weights_file", type=str, required=True, default=argparse.SUPPRESS)
+        _parser.add_argument("--config-file", dest="config_file", type=str, required=True, default=argparse.SUPPRESS)
+        _parser.add_argument("--names-file", dest="names_file", type=str, required=True, default=argparse.SUPPRESS)
+        _parser.add_argument("--namespace", dest="namespace", type=str, required=True, default=argparse.SUPPRESS)
+        _parser.add_argument("--domain", dest="domain", type=str, required=True, default=argparse.SUPPRESS)
+        _parser.add_argument("----output-paths", dest="_output_paths", type=str, nargs=3)
+        _parsed_args = vars(_parser.parse_args())
+        _output_files = _parsed_args.pop("_output_paths", [])
+
+        _outputs = save_darknet_model(**_parsed_args)
+
+        _output_serializers = [
+            _serialize_str,
+            _serialize_str,
+            _serialize_str,
+
+        ]
+
+        import os
+        for idx, output_file in enumerate(_output_files):
+            try:
+                os.makedirs(os.path.dirname(output_file))
+            except OSError:
+                pass
+            with open(output_file, 'w') as f:
+                f.write(_output_serializers[idx](_outputs[idx]))
+      image: python:3.7
+      volumeMounts:
+      - {mountPath: /workspace, name: create-workspace}
+    inputs:
+      parameters:
+      - {name: create-workspace-name}
+      - {name: domain}
+      - {name: model_name}
+      - {name: namespace}
+      - {name: prepare-labelstudio-data-for-darknet-config_file}
+      - {name: prepare-labelstudio-data-for-darknet-names_file}
+      - {name: prepare-labelstudio-data-for-darknet-weights_file}
+    outputs:
+      artifacts:
+      - {name: save-darknet-model-config_file, path: /tmp/outputs/config_file/data}
+      - {name: save-darknet-model-names_file, path: /tmp/outputs/names_file/data}
+      - {name: save-darknet-model-weights_file, path: /tmp/outputs/weights_file/data}
+    metadata:
+      labels:
+        pipelines.kubeflow.org/kfp_sdk_version: 1.7.2
+        pipelines.kubeflow.org/pipeline-sdk-type: kfp
+        pipelines.kubeflow.org/enable_caching: "true"
+      annotations: {pipelines.kubeflow.org/component_spec: '{"implementation": {"container":
+          {"args": ["--model-name", {"inputValue": "model_name"}, "--weights-file",
+          {"inputValue": "weights_file"}, "--config-file", {"inputValue": "config_file"},
+          "--names-file", {"inputValue": "names_file"}, "--namespace", {"inputValue":
+          "namespace"}, "--domain", {"inputValue": "domain"}, "----output-paths",
+          {"outputPath": "names_file"}, {"outputPath": "config_file"}, {"outputPath":
+          "weights_file"}], "command": ["sh", "-c", "(PIP_DISABLE_PIP_VERSION_CHECK=1
+          python3 -m pip install --quiet --no-warn-script-location ''google-cloud-storage''
+          || PIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet --no-warn-script-location
+          ''google-cloud-storage'' --user) && \"$0\" \"$@\"", "sh", "-ec", "program_path=$(mktemp)\nprintf
+          \"%s\" \"$0\" > \"$program_path\"\npython3 -u \"$program_path\" \"$@\"\n",
+          "def save_darknet_model(\n    model_name,\n    weights_file,\n    config_file,\n    names_file,\n    namespace,\n    domain):\n    from
+          google.cloud import storage\n    import os\n    from collections import
+          namedtuple\n\n    def upload_blob(bucket_name, source_file_name, destination_blob_name):\n        \"\"\"Uploads
+          a file to the bucket.\"\"\"\n        storage_client = storage.Client()\n        bucket
+          = storage_client.bucket(bucket_name)\n        blob = bucket.blob(destination_blob_name)\n\n        blob.upload_from_filename(source_file_name)\n\n        print(\n            \"File
+          {} uploaded to {}.\".format(\n                source_file_name, destination_blob_name\n            )\n        )\n\n    bucket_name
+          = f\"{namespace}.{domain}\"\n    destination_prefix = os.path.join(''models/'',
+          model_name)\n\n    destination_model_weights = os.path.join(destination_prefix,
+          ''model.weights'')\n    destination_model_config = os.path.join(destination_prefix,
+          ''model.cfg'')\n    destination_obj_names = os.path.join(destination_prefix,
+          ''obj.names'')\n\n    upload_blob(bucket_name, weights_file, destination_model_weights)\n    upload_blob(bucket_name,
+          config_file, destination_model_config)\n    upload_blob(bucket_name, names_file,
+          destination_obj_names)\n\n    output = namedtuple(''DarknetModel'', [''names_file'',
+          ''config_file'', ''weights_file''])\n    return output(destination_obj_names,
+          destination_model_config, destination_model_weights)\n\ndef _serialize_str(str_value:
+          str) -> str:\n    if not isinstance(str_value, str):\n        raise TypeError(''Value
+          \"{}\" has type \"{}\" instead of str.''.format(str(str_value), str(type(str_value))))\n    return
+          str_value\n\nimport argparse\n_parser = argparse.ArgumentParser(prog=''Save
+          darknet model'', description='''')\n_parser.add_argument(\"--model-name\",
+          dest=\"model_name\", type=str, required=True, default=argparse.SUPPRESS)\n_parser.add_argument(\"--weights-file\",
+          dest=\"weights_file\", type=str, required=True, default=argparse.SUPPRESS)\n_parser.add_argument(\"--config-file\",
+          dest=\"config_file\", type=str, required=True, default=argparse.SUPPRESS)\n_parser.add_argument(\"--names-file\",
+          dest=\"names_file\", type=str, required=True, default=argparse.SUPPRESS)\n_parser.add_argument(\"--namespace\",
+          dest=\"namespace\", type=str, required=True, default=argparse.SUPPRESS)\n_parser.add_argument(\"--domain\",
+          dest=\"domain\", type=str, required=True, default=argparse.SUPPRESS)\n_parser.add_argument(\"----output-paths\",
+          dest=\"_output_paths\", type=str, nargs=3)\n_parsed_args = vars(_parser.parse_args())\n_output_files
+          = _parsed_args.pop(\"_output_paths\", [])\n\n_outputs = save_darknet_model(**_parsed_args)\n\n_output_serializers
+          = [\n    _serialize_str,\n    _serialize_str,\n    _serialize_str,\n\n]\n\nimport
+          os\nfor idx, output_file in enumerate(_output_files):\n    try:\n        os.makedirs(os.path.dirname(output_file))\n    except
+          OSError:\n        pass\n    with open(output_file, ''w'') as f:\n        f.write(_output_serializers[idx](_outputs[idx]))\n"],
+          "image": "python:3.7"}}, "inputs": [{"name": "model_name", "type": "String"},
+          {"name": "weights_file", "type": "String"}, {"name": "config_file", "type":
+          "String"}, {"name": "names_file", "type": "String"}, {"name": "namespace",
+          "type": "String"}, {"name": "domain", "type": "String"}], "name": "Save
+          darknet model", "outputs": [{"name": "names_file", "type": "String"}, {"name":
+          "config_file", "type": "String"}, {"name": "weights_file", "type": "String"}]}',
+        pipelines.kubeflow.org/component_ref: '{}', pipelines.kubeflow.org/arguments.parameters: '{"config_file":
+          "{{inputs.parameters.prepare-labelstudio-data-for-darknet-config_file}}",
+          "domain": "{{inputs.parameters.domain}}", "model_name": "{{inputs.parameters.model_name}}",
+          "names_file": "{{inputs.parameters.prepare-labelstudio-data-for-darknet-names_file}}",
+          "namespace": "{{inputs.parameters.namespace}}", "weights_file": "{{inputs.parameters.prepare-labelstudio-data-for-darknet-weights_file}}"}'}
+    volumes:
+    - name: create-workspace
+      persistentVolumeClaim: {claimName: '{{inputs.parameters.create-workspace-name}}'}
+  - name: show-workspace
+    container:
+      args: [apk add tree && tree /workspace]
+      command: [sh, -c]
+      image: alpine
+      volumeMounts:
+      - {mountPath: /workspace, name: create-workspace}
+    inputs:
+      parameters:
+      - {name: create-workspace-name}
+    metadata:
+      labels:
+        pipelines.kubeflow.org/kfp_sdk_version: 1.7.2
+        pipelines.kubeflow.org/pipeline-sdk-type: kfp
+        pipelines.kubeflow.org/enable_caching: "true"
+    volumes:
+    - name: create-workspace
+      persistentVolumeClaim: {claimName: '{{inputs.parameters.create-workspace-name}}'}
+  - name: train-darknet
+    container:
+      args: ['cd /workspace && darknet detector train {{inputs.parameters.prepare-labelstudio-data-for-darknet-data_file}}
+          {{inputs.parameters.prepare-labelstudio-data-for-darknet-config_file}} {{inputs.parameters.prepare-labelstudio-data-for-darknet-conv_file}}
+          -dont_show -map']
+      command: [sh, -c]
+      image: gcr.io/teknoir/darknet:cpu-cv-dev
+      volumeMounts:
+      - {mountPath: /workspace, name: create-workspace}
+    inputs:
+      parameters:
+      - {name: create-workspace-name}
+      - {name: prepare-labelstudio-data-for-darknet-config_file}
+      - {name: prepare-labelstudio-data-for-darknet-conv_file}
+      - {name: prepare-labelstudio-data-for-darknet-data_file}
+    metadata:
+      labels:
+        pipelines.kubeflow.org/kfp_sdk_version: 1.7.2
+        pipelines.kubeflow.org/pipeline-sdk-type: kfp
+        pipelines.kubeflow.org/enable_caching: "true"
+    volumes:
+    - name: create-workspace
+      persistentVolumeClaim: {claimName: '{{inputs.parameters.create-workspace-name}}'}
+  arguments:
+    parameters:
+    - {name: model_name}
+    - {name: labelstudio_project}
+    - {name: labels}
+    - {name: namespace}
+    - {name: domain}
+  serviceAccountName: pipeline-runner

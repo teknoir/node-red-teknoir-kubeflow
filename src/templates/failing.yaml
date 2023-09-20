@@ -1,0 +1,30 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: sleep-
+  annotations: {pipelines.kubeflow.org/kfp_sdk_version: 1.7.0, pipelines.kubeflow.org/pipeline_compilation_time: '2021-08-30T09:09:07.590535',
+    pipelines.kubeflow.org/pipeline_spec: '{"description": "Just a demo", "name": "Sleep pipeline"}'}
+  labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.7.0}
+spec:
+  entrypoint: sleep
+  templates:
+  - name: sleep
+    dag:
+      tasks:
+      - {name: wait, template: wait}
+  - name: wait
+    container:
+      args: [sssss 30s]
+      command: [sh, -c]
+      image: busybox
+    metadata:
+      labels:
+        pipelines.kubeflow.org/kfp_sdk_version: 1.7.0
+        pipelines.kubeflow.org/pipeline-sdk-type: kfp
+        pipelines.kubeflow.org/enable_caching: "true"
+      annotations: {pipelines.kubeflow.org/max_cache_staleness: P0D}
+  arguments:
+    parameters: 
+    - {name: model_name}
+    - {name: labelstudio_project}
+  serviceAccountName: pipeline-runner

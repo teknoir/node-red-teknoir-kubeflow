@@ -1,0 +1,123 @@
+<script type="text/javascript">
+    RED.nodes.registerType("run-and-poll",{
+        category: "pipelines",
+        color: "#c28285",
+        defaults: {
+            name: {value: "Run pipeline"},
+            runName: {value: "My simple run"},
+            selectedTemplate: {value: "",required: true},
+            pipelineArguments: {value: []},
+            userArguments: {value: [], required: true},
+            templates: {value: [],required: true},
+            agrumentsSelector: {value: 'objects', required: false},
+            agrumentsSelectorType: {value: 'msgPayload'},
+            triggerStatus: {value: 'Succeeded'}
+
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: "tn_dark.svg",
+        inputLabels: function(index) {
+            return "json ";
+        },
+        outputLabels: function(index) {
+            return "pipeline id";
+        },
+        label: function() {
+            return this.name||"start-pipeline";
+        },
+        oneditsave: function() {
+            const userArgs = $("#pipelineAgruments")
+            const args = userArgs.find('input').toArray().map(el => {
+                    return { name: $(el).attr('id'), value: $(el).val()}
+                })
+                .filter(e => e.value || e.value != '')
+            this.userArguments = args
+        },
+
+        oneditprepare: function() {
+            var node=this;
+            const selectedTemplate = $("#node-input-selectedTemplate")
+            const userArgs = $("#pipelineAgruments")
+
+            const msgPayload = {
+                value: "msgPayload",
+                label: "msg.payload."
+            };
+            $("#node-input-agrumentsSelector").typedInput({
+                default: 'msgPayload',
+                types: [msgPayload],
+                typeField: "#node-input-agrumentsSelectorType"
+            });
+
+            selectedTemplate.change((e) => {
+                const template = node.templates.find(
+                    (x) => x.name=== e.target.value
+                );
+                if(template){
+                    node.pipelineArguments = template.content.spec.arguments.parameters
+                    const html = node.pipelineArguments.map(arg => {
+                        value = node.userArguments.find(userArg => userArg.name === arg.name)?.value
+                        return `
+                        <div class="pipeline-argument form-row">
+                            <label for="${arg.name}"><i class="icon-tag"></i>${arg.name}</label>
+                            <input type="text" id="${arg.name}" value="${value || ''}">
+                        </div>`
+                    });
+                    userArgs.html(html);
+                }
+                
+            })
+            
+            $.getJSON("kfp/templates",function(templates) {
+                node.templates = templates
+                templates.forEach((template) => {
+                    $("#node-input-selectedTemplate").append(
+                        `<option value="${template.name}">${template.name.replace(/\.[^/.]+$/, "").replaceAll("_", " ")}</option>`
+                    );
+                });
+                selectedTemplate.val(node.selectedTemplate);
+                selectedTemplate.trigger("change");
+            });
+        },
+    });
+</script>
+
+<script type="text/html" data-template-name="run-and-poll">
+  <h4>Settings</h4>
+  <div class="form-row">
+      <label for="node-input-name"><i class="icon-tag"></i>name</label>
+      <input type="text" id="node-input-name" placeholder="Name">
+  </div>
+  <div class="form-row">
+    <label for="node-input-runName"><i class="icon-tag"></i>run name</label>
+    <input type="text" id="node-input-runName" placeholder="Run name">
+</div>
+<div class="form-row">
+    <label for="node-input-agrumentsSelector">Arguments property</label>
+    <input type="text" id="node-input-agrumentsSelector" placeholder="select arguments from field">
+    <input type="hidden" id="node-input-agrumentsSelectorType">
+</div>
+  <div class="form-row">
+      <label for="node-input-selectedTemplate"></i>Pipeline Template</label>
+      <select id="node-input-selectedTemplate">
+      </select>
+  </div>
+  <div class="form-row">
+    <label for="node-input-triggerStatus"><i class="icon-tag"></i>status trigger</label>
+    <select id="node-input-triggerStatus">
+        <option value="Succeeded">Succeeded</option>
+        <option value="Failed">Failed</option>
+        <option value="Any">Any</option>
+    </select>
+ </div>
+  <div class="pipeline-parameters">
+    <label></i>Pipeline arguments</label>
+    <div id="pipelineAgruments" class="pipeline-arguments"></div>
+</div>
+</div>
+</script>
+
+<script type="text/html" data-help-name="run-and-poll">
+  <p><strong>This node  starts pipeline and polls its status</strong><br /></p>
+</script>

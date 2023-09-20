@@ -1,0 +1,33 @@
+{
+  "name": "node-red-teknoir-kubeflow",
+  "version": "0.0.1",
+  "description": "A set of nodes to connect to Kubeflow in interesting ways",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/teknoir/node-red-teknoir-kubeflow.git"
+  },
+  "keywords": [
+    "node-red",
+    "teknoir",
+    "nodered"
+  ],
+  "node-red": {
+    "nodes": {
+      "kfp-pipeline-start": "src/kfp-pipeline-start.js",
+      "kfp-pipeline-polling-start": "src/kfp-pipeline-polling-start.js",
+      "kfp-pipeline-status-poller": "src/kfp-pipeline-status-poller.js",
+      "kfp-pipeline-polling-start-existing": "src/kfp-pipeline-polling-start-existing.js"
+    }
+  },
+  "author": "Anders Åslund <anders.aslund@teknoir.ai>",
+  "bugs": {
+    "url": "https://teknoir.ai"
+  },
+  "homepage": "https://teknoir.ai",
+  "dependencies": {
+    "node-fetch": "2.6.0"
+  }
+}
