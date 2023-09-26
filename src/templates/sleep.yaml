@@ -1,0 +1,44 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: just-sleep-2-
+  annotations: {pipelines.kubeflow.org/kfp_sdk_version: 1.7.2, pipelines.kubeflow.org/pipeline_compilation_time: '2021-09-02T12:55:14.152959',
+    pipelines.kubeflow.org/pipeline_spec: '{"description": "ZZZZzzzzzzzzz", "inputs":
+      [{"name": "seconds"}], "name": "Just Sleep"}'}
+  labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.7.2}
+spec:
+  entrypoint: just-sleep-2
+  templates:
+  - name: just-sleep
+    container:
+      args: []
+      command: [sleep, '{{inputs.parameters.seconds}}']
+      image: alpine
+    inputs:
+      parameters:
+      - {name: seconds}
+    metadata:
+      labels:
+        pipelines.kubeflow.org/kfp_sdk_version: 1.7.2
+        pipelines.kubeflow.org/pipeline-sdk-type: kfp
+        pipelines.kubeflow.org/enable_caching: "true"
+      annotations: {pipelines.kubeflow.org/component_spec: '{"implementation": {"container":
+          {"command": ["sleep", {"inputValue": "seconds"}], "image": "alpine"}}, "inputs":
+          [{"name": "seconds", "type": "Integer"}], "name": "Just sleep"}', pipelines.kubeflow.org/component_ref: '{"digest":
+          "3a4a6e2b5540e85b91cba5d3c677c50a1cd731ddd0738fc1134d140d121530a7"}', pipelines.kubeflow.org/arguments.parameters: '{"seconds":
+          "{{inputs.parameters.seconds}}"}'}
+  - name: just-sleep-2
+    inputs:
+      parameters:
+      - {name: seconds}
+    dag:
+      tasks:
+      - name: just-sleep
+        template: just-sleep
+        arguments:
+          parameters:
+          - {name: seconds, value: '{{inputs.parameters.seconds}}'}
+  arguments:
+    parameters:
+    - {name: seconds}
+  serviceAccountName: pipeline-runner

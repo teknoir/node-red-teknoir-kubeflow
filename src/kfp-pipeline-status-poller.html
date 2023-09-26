@@ -1,0 +1,46 @@
+<script type="text/javascript">
+    RED.nodes.registerType("pipeline-status-poller",{
+        category: "pipelines",
+        color: "#c28285",
+        defaults: {
+            name: {value: "Status Poll"},
+            triggerStatus: {value: 'Succeeded'}
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: "tn_dark.svg",
+        inputLabels: function(index) {
+            return "json ";
+        },
+        outputLabels: function(index) {
+            return "pipeline id";
+        },
+        label: function() {
+            return this.name||"start-pipeline";
+        },
+    });
+</script>
+
+<script type="text/html" data-template-name="pipeline-status-poller">
+  <h4>Settings</h4>
+  <div class="form-row">
+      <label for="node-input-name"><i class="icon-tag"></i>name</label>
+      <input type="text" id="node-input-name" placeholder="Name">
+  </div>
+  <div class="form-row">
+    <label for="node-input-triggerStatus"><i class="icon-tag"></i>status trigger</label>
+    <select id="node-input-triggerStatus">
+        <option value="Succeeded">Succeeded</option>
+        <option value="Failed">Failed</option>
+        <option value="Any">Any</option>
+    </select>
+ </div>
+  </div>
+
+
+</div>
+</script>
+
+<script type="text/html" data-help-name="run-pipeline">
+  <p><strong>This node is polling pipeline status</strong><br /></p>
+</script>
